@@ -1,0 +1,165 @@
+From 6be5a0b4f0d2c129c3589e2d0446ef015bdcdf72 Mon Sep 17 00:00:00 2001
+From: JJGadgets <git@jjgadgets.tech>
+Date: Fri, 20 May 2022 01:55:50 +0800
+Subject: [PATCH] input/libinput: add scroll_button_lock method
+
+input/libinput: fix scroll_button_lock
+
+input/libinput: fix scroll_button_lock
+
+input/libinput: fix scroll_button_lock
+---
+ include/sway/commands.h                  |  1 +
+ include/sway/config.h                    |  1 +
+ sway/commands/input.c                    |  1 +
+ sway/commands/input/scroll_button_lock.c | 23 +++++++++++++++++++++++
+ sway/config/input.c                      |  4 ++++
+ sway/input/libinput.c                    | 17 +++++++++++++++++
+ sway/meson.build                         |  1 +
+ 7 files changed, 48 insertions(+)
+ create mode 100644 sway/commands/input/scroll_button_lock.c
+
+diff --git a/include/sway/commands.h b/include/sway/commands.h
+index 2746ef28..1db83904 100644
+--- a/include/sway/commands.h
++++ b/include/sway/commands.h
+@@ -263,6 +263,7 @@ sway_cmd input_cmd_repeat_delay;
+ sway_cmd input_cmd_repeat_rate;
+ sway_cmd input_cmd_scroll_button;
+ sway_cmd input_cmd_scroll_method;
++sway_cmd input_cmd_scroll_button_lock;
+ sway_cmd input_cmd_tap;
+ sway_cmd input_cmd_tap_button_map;
+ sway_cmd input_cmd_tool_mode;
+diff --git a/include/sway/config.h b/include/sway/config.h
+index fda0e83f..328aad47 100644
+--- a/include/sway/config.h
++++ b/include/sway/config.h
+@@ -146,6 +146,7 @@ struct input_config {
+ 	int repeat_rate;
+ 	int scroll_button;
+ 	int scroll_method;
++	int scroll_button_lock;
+ 	int send_events;
+ 	int tap;
+ 	int tap_button_map;
+diff --git a/sway/commands/input.c b/sway/commands/input.c
+index 77acb671..28d4384f 100644
+--- a/sway/commands/input.c
++++ b/sway/commands/input.c
+@@ -27,6 +27,7 @@ static const struct cmd_handler input_handlers[] = {
+ 	{ "scroll_button", input_cmd_scroll_button },
+ 	{ "scroll_factor", input_cmd_scroll_factor },
+ 	{ "scroll_method", input_cmd_scroll_method },
++	{ "scroll_button_lock", input_cmd_scroll_button_lock },
+ 	{ "tap", input_cmd_tap },
+ 	{ "tap_button_map", input_cmd_tap_button_map },
+ 	{ "tool_mode", input_cmd_tool_mode },
+diff --git a/sway/commands/input/scroll_button_lock.c b/sway/commands/input/scroll_button_lock.c
+new file mode 100644
+index 00000000..6959baa1
+--- /dev/null
++++ b/sway/commands/input/scroll_button_lock.c
+@@ -0,0 +1,23 @@
++#include "sway/config.h"
++#include "sway/commands.h"
++#include "sway/input/cursor.h"
++
++struct cmd_results *input_cmd_scroll_button_lock(int argc, char **argv) {
++	struct cmd_results *error = NULL;
++	if ((error = checkarg(argc, "scroll_button_lock", EXPECTED_AT_LEAST, 1))) {
++		return error;
++	}
++	struct input_config *ic = config->handler_context.input_config;
++	if (!ic) {
++		return cmd_results_new(CMD_FAILURE, "No input device defined.");
++	}
++
++	if (strcmp(*argv, "disable") == 0) {
++		ic->scroll_button_lock = 0;
++		return cmd_results_new(CMD_SUCCESS, NULL);
++	}
++
++	ic->scroll_button_lock = LIBINPUT_CONFIG_SCROLL_BUTTON_LOCK_ENABLED;
++
++	return cmd_results_new(CMD_SUCCESS, NULL);
++}
+diff --git a/sway/config/input.c b/sway/config/input.c
+index a998e170..68755d1f 100644
+--- a/sway/config/input.c
++++ b/sway/config/input.c
+@@ -34,6 +34,7 @@ struct input_config *new_input_config(const char* identifier) {
+ 	input->scroll_factor = FLT_MIN;
+ 	input->scroll_button = INT_MIN;
+ 	input->scroll_method = INT_MIN;
++	input->scroll_button_lock = INT_MIN;
+ 	input->left_handed = INT_MIN;
+ 	input->repeat_delay = INT_MIN;
+ 	input->repeat_rate = INT_MIN;
+@@ -88,6 +89,9 @@ void merge_input_config(struct input_config *dst, struct input_config *src) {
+ 	if (src->scroll_button != INT_MIN) {
+ 		dst->scroll_button = src->scroll_button;
+ 	}
++	if (src->scroll_button_lock != INT_MIN) {
++		dst->scroll_button_lock = src->scroll_button_lock;
++	}
+ 	if (src->send_events != INT_MIN) {
+ 		dst->send_events = src->send_events;
+ 	}
+diff --git a/sway/input/libinput.c b/sway/input/libinput.c
+index 3c0f359d..5701c087 100644
+--- a/sway/input/libinput.c
++++ b/sway/input/libinput.c
+@@ -156,6 +156,18 @@ static bool set_scroll_button(struct libinput_device *dev, uint32_t button) {
+ 	return true;
+ }
+ 
++static bool set_scroll_button_lock(struct libinput_device *device, 
++		enum libinput_config_scroll_button_lock_state state) {
++	uint32_t scroll = libinput_device_config_scroll_get_methods(device);
++	if ((scroll & ~LIBINPUT_CONFIG_SCROLL_NO_SCROLL) == 0 ||
++			libinput_device_config_scroll_get_button(device) == state) {
++		return false;
++	}
++	sway_log(SWAY_DEBUG, "scroll_set_button_lock(%d)", state);
++	log_status(libinput_device_config_scroll_set_button_lock(device, state));
++	return true;
++}
++
+ static bool set_dwt(struct libinput_device *device, bool dwt) {
+ 	if (!libinput_device_config_dwt_is_available(device) ||
+ 			libinput_device_config_dwt_get_enabled(device) == dwt) {
+@@ -252,6 +264,9 @@ void sway_input_configure_libinput_device(struct sway_input_device *input_device
+ 	if (ic->scroll_button != INT_MIN) {
+ 		changed |= set_scroll_button(device, ic->scroll_button);
+ 	}
++	if (ic->scroll_button_lock != INT_MIN) {
++		changed |= set_scroll_button_lock(device, ic->scroll_button_lock);
++	}
+ 	if (ic->dwt != INT_MIN) {
+ 		changed |= set_dwt(device, ic->dwt);
+ 	}
+@@ -302,6 +317,8 @@ void sway_input_reset_libinput_device(struct sway_input_device *input_device) {
+ 		libinput_device_config_scroll_get_default_method(device));
+ 	changed |= set_scroll_button(device,
+ 		libinput_device_config_scroll_get_default_button(device));
++	changed |= set_scroll_button_lock(device,
++		libinput_device_config_scroll_get_default_button_lock(device));
+ 	changed |= set_dwt(device,
+ 		libinput_device_config_dwt_get_default_enabled(device));
+ 
+diff --git a/sway/meson.build b/sway/meson.build
+index 8eab31a2..a68451fb 100644
+--- a/sway/meson.build
++++ b/sway/meson.build
+@@ -167,6 +167,7 @@ sway_sources = files(
+ 	'commands/input/scroll_button.c',
+ 	'commands/input/scroll_factor.c',
+ 	'commands/input/scroll_method.c',
++        'commands/input/scroll_button_lock.c',
+ 	'commands/input/tap.c',
+ 	'commands/input/tap_button_map.c',
+ 	'commands/input/tool_mode.c',
+-- 
+2.38.1
+
